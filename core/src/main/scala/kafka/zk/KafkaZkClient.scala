@@ -82,6 +82,13 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
     info(s"Registered broker ${brokerInfo.broker.id} at path $path with addresses: ${brokerInfo.broker.endPoints}")
   }
 
+  def updateBrokerInfoInZk(brokerInfo: BrokerInfo): Unit = {
+    val brokerIdPath = brokerInfo.path
+    val setDataRequest = SetDataRequest(brokerIdPath, brokerInfo.toJsonBytes, ZkVersion.NoVersion)
+    retryRequestUntilConnected(setDataRequest)
+    info("Updated broker %d at path %s with addresses: %s".format(brokerInfo.broker.id, brokerIdPath, brokerInfo.broker.endPoints))
+  }
+
   /**
    * Gets topic partition states for the given partitions.
    * @param partitions the partitions for which we want ot get states.
@@ -754,11 +761,29 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
 
   /**
    * Gets the leader for a given partition
-   * @param partition
+   * @param partition The partition for which we want to get leader.
    * @return optional integer if the leader exists and None otherwise.
    */
   def getLeaderForPartition(partition: TopicPartition): Option[Int] =
     getTopicPartitionState(partition).map(_.leaderAndIsr.leader)
+
+  /**
+   * Gets the in-sync replicas (ISR) for a specific topicPartition
+   * @param partition The partition for which we want to get ISR.
+   * @return optional ISR if exists and None otherwise
+   */
+  def getInSyncReplicasForPartition(partition: TopicPartition): Option[Seq[Int]] =
+    getTopicPartitionState(partition).map(_.leaderAndIsr.isr)
+
+
+  /**
+   * Gets the leader epoch for a specific topicPartition
+   * @param partition The partition for which we want to get the leader epoch
+   * @return optional integer if the leader exists and None otherwise
+   */
+  def getEpochForPartition(partition: TopicPartition): Option[Int] = {
+    getTopicPartitionState(partition).map(_.leaderAndIsr.leaderEpoch)
+  }
 
   /**
    * Gets the isr change notifications as strings. These strings are the znode names and not the absolute znode path.
@@ -1349,7 +1374,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
     }
   }
 
-  private[zk] def pathExists(path: String): Boolean = {
+  def pathExists(path: String): Boolean = {
     val existsRequest = ExistsRequest(path)
     val existsResponse = retryRequestUntilConnected(existsRequest)
     existsResponse.resultCode match {
